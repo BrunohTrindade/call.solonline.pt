@@ -13,30 +13,32 @@ return new class extends Migration {
             // Índice para filtros por processed_at (pending/processed)
             if (Schema::hasColumn('contacts', 'processed_at')) {
                 $driver = DB::getDriverName();
-                $idxName = 'contacts_processed_at_index';
-                $exists = false;
-                if ($driver === 'sqlite') {
-                    $exists = DB::table('sqlite_master')
-                        ->where('type', 'index')
-                        ->where('name', $idxName)
+                if (in_array($driver, ['mysql','mariadb'])) {
+                    $dbname = DB::getDatabaseName();
+                    $exists = DB::table('information_schema.statistics')
+                        ->where('TABLE_SCHEMA', $dbname)
+                        ->where('TABLE_NAME', 'contacts')
+                        ->where('COLUMN_NAME', 'processed_at')
                         ->exists();
-                } else {
-                    // fallback genérico: tenta criar e ignora erro no down()
-                }
-                if (!$exists) {
-                    $table->index('processed_at');
+                    if (!$exists) {
+                        $table->index('processed_at', 'contacts_processed_at_index');
+                    }
                 }
             }
+
             // Índices opcionais para busca básica (evita duplicar se já existir por outra migração)
             foreach (['email','nome','empresa'] as $col) {
                 if (Schema::hasColumn('contacts', $col)) {
-                    $idx = 'contacts_'.$col.'_index';
-                    $exists = false;
-                    if (DB::getDriverName() === 'sqlite') {
-                        $exists = DB::table('sqlite_master')->where('type','index')->where('name',$idx)->exists();
-                    }
-                    if (!$exists) {
-                        $table->index($col);
+                    if (in_array(DB::getDriverName(), ['mysql','mariadb'])) {
+                        $dbname = DB::getDatabaseName();
+                        $exists = DB::table('information_schema.statistics')
+                            ->where('TABLE_SCHEMA', $dbname)
+                            ->where('TABLE_NAME', 'contacts')
+                            ->where('COLUMN_NAME', $col)
+                            ->exists();
+                        if (!$exists) {
+                            $table->index($col, 'contacts_'.$col.'_index');
+                        }
                     }
                 }
             }
@@ -46,12 +48,11 @@ return new class extends Migration {
     public function down(): void
     {
         Schema::table('contacts', function (Blueprint $table) {
-            // Remove índices se existirem
-            try { $table->dropIndex(['numero']); } catch (\Throwable $e) {}
-            try { $table->dropIndex(['processed_at']); } catch (\Throwable $e) {}
+            // Remove apenas índices que esta migration pode ter criado
             try { $table->dropIndex(['email']); } catch (\Throwable $e) {}
             try { $table->dropIndex(['nome']); } catch (\Throwable $e) {}
             try { $table->dropIndex(['empresa']); } catch (\Throwable $e) {}
+            // Não remover processed_at ou numero aqui (podem ter sido criados por outras migrations)
         });
     }
 };
