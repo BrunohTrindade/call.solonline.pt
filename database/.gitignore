@@ -1,0 +1,2 @@
+*.sqlite*
+# O projeto não usa mais SQLite. Este ignore permanece para prevenir inclusão acidental.

@@ -1,0 +1,46 @@
+### Login
+POST http://127.0.0.1:8000/api/login
+Content-Type: application/json
+
+{
+  "email": "admin@example.com",
+  "password": "admin123"
+}
+
+### Guardar token para usar nas próximas
+@token = {{login.response.body.$.token}}
+
+### Me
+GET http://127.0.0.1:8000/api/me
+Authorization: Bearer {{token}}
+
+### Listar contatos (página 1)
+GET http://127.0.0.1:8000/api/contacts?page=1
+Authorization: Bearer {{token}}
+
+### Detalhe de um contato
+GET http://127.0.0.1:8000/api/contacts/1
+Authorization: Bearer {{token}}
+
+### Atualizar observação e marcar processado
+PUT http://127.0.0.1:8000/api/contacts/1
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "observacao": "Contato realizado, aguardando retorno."
+}
+
+### Importar CSV (admin)
+# Use a extensão REST Client do VS Code e altere o caminho do arquivo abaixo
+POST http://127.0.0.1:8000/api/contacts/import
+Authorization: Bearer {{token}}
+Content-Type: multipart/form-data; boundary=WebKitFormBoundary7MA4YWxkTrZu0gW
+
+--WebKitFormBoundary7MA4YWxkTrZu0gW
+Content-Disposition: form-data; name="file"; filename="contatos.csv"
+Content-Type: text/csv
+
+# Substitua a linha abaixo pelo caminho do seu arquivo CSV local quando for testar com a extensão REST Client:
+# < /caminho/para/seu/arquivo/contatos.csv
+--WebKitFormBoundary7MA4YWxkTrZu0gW--
