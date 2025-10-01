@@ -774,6 +774,213 @@ Observações:
 - Se usar apenas tokens Bearer (Sanctum Personal Access Tokens) sem cookies, `SESSION_DOMAIN` e `SANCTUM_STATEFUL_DOMAINS` podem não ser necessários.
 - Para cookies funcionarem corretamente em produção sob HTTPS, `SESSION_SECURE_COOKIE=true` é recomendado.
 
+
+
+
+## Forma A (sem domínio): Backend 8080 e Frontend 8081
+
+Cenário para testes/início sem DNS: acessar por IP e portas diferentes.
+
+Resumo:
+- Backend/API: http://SEU_IP:8080
+- Frontend: http://SEU_IP:8081
+
+### Estrutura de pastas
+
+```
+/var/www/
+	app-frontend/        # artefatos buildados do frontend (dist)
+	app-backend/         # este repositório Laravel
+		public/            # raiz pública do backend
+```
+
+### Abrir portas no firewall (UFW)
+
+```
+sudo ufw allow 8080/tcp
+sudo ufw allow 8081/tcp
+```
+
+### Backend (Laravel) na porta 8080
+
+1) Clonar e configurar
+- Copiar o repositório para `/var/www/app-backend`
+- Criar `.env` com base no exemplo e ajustar:
+	- `APP_URL=http://SEU_IP:8080`
+	- `FRONTEND_URL=http://SEU_IP:8081`
+	- `CORS_ALLOWED_ORIGINS=http://SEU_IP:8081` (origem diferente por causa da porta)
+	- `DB_*` conforme sua base local (host 127.0.0.1)
+
+Exemplo de `.env` (Forma A portas):
+```
+APP_NAME="Call SOL"
+APP_ENV=production
+APP_KEY=base64:***
+APP_DEBUG=false
+APP_URL=http://SEU_IP:8080
+
+FRONTEND_URL=http://SEU_IP:8081
+CORS_ALLOWED_ORIGINS=http://SEU_IP:8081
+
+LOG_CHANNEL=stack
+LOG_LEVEL=info
+
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=callsol
+DB_USERNAME=callsol
+DB_PASSWORD=***
+
+SESSION_DRIVER=cookie
+SESSION_LIFETIME=120
+
+QUEUE_CONNECTION=database
+CACHE_DRIVER=file
+FILESYSTEM_DISK=public
+```
+
+2) Dependências, chave e migrações
+```
+cd /var/www/app-backend
+composer install --no-dev --optimize-autoloader
+php artisan key:generate --force
+php artisan migrate --force
+# Opcional, criar admin inicial:
+php artisan db:seed --force
+php artisan storage:link
+php artisan config:cache route:cache view:cache
+```
+
+3) Nginx para o backend (escutando 8080)
+
+Arquivo: `/etc/nginx/sites-available/callsol-backend-8080`
+```
+server {
+		listen 8080;
+		server_name _;
+
+		root /var/www/app-backend/public;
+		index index.php;
+
+		location / { try_files $uri $uri/ /index.php?$query_string; }
+
+		location ~ \.php$ {
+				include snippets/fastcgi-php.conf;
+				fastcgi_pass unix:/run/php/php8.2-fpm.sock;
+		}
+
+		location ~ /\.(?!well-known).* { deny all; }
+}
+```
+Ativar site e recarregar:
+```
+sudo ln -s /etc/nginx/sites-available/callsol-backend-8080 /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+### Frontend na porta 8081
+
+1) Build do frontend com a API apontando para 8080
+```
+# no projeto do frontend
+export VITE_API_URL=http://SEU_IP:8080
+npm ci
+npm run build
+```
+
+2) Publicar artefatos
+```
+# copie a pasta dist/ resultante para o servidor
+rsync -avz --delete dist/ usuario@SEU_IP:/var/www/app-frontend/
+```
+
+3) Nginx para o frontend (escutando 8081)
+
+Arquivo: `/etc/nginx/sites-available/callsol-frontend-8081`
+```
+server {
+		listen 8081;
+		server_name _;
+
+		root /var/www/app-frontend;
+		index index.html;
+
+		location / { try_files $uri /index.html; }
+}
+```
+Ativar site e recarregar:
+```
+sudo ln -s /etc/nginx/sites-available/callsol-frontend-8081 /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+### Testes rápidos
+
+```
+curl -I http://SEU_IP:8080
+curl -sS http://SEU_IP:8080/api/health | jq .
+curl -I http://SEU_IP:8081
+```
+
+Login e listagem (exemplo):
+```
+curl -sS -X POST http://SEU_IP:8080/api/login \
+	-H 'Content-Type: application/json' \
+	-d '{"email":"ADMIN_EMAIL","password":"ADMIN_PASSWORD"}'
+
+# Em seguida use o token de resposta
+TOKEN="..."
+curl -sS http://SEU_IP:8080/api/contacts -H "Authorization: Bearer $TOKEN"
+```
+
+### Supervisor (fila) — opcional
+
+Se for usar jobs em background, crie um programa para o worker:
+
+Arquivo: `/etc/supervisor/conf.d/callsol-ports-queue.conf`
+```
+[program:callsol-ports-queue]
+command=/usr/bin/php /var/www/app-backend/artisan queue:work --sleep=3 --tries=1 --timeout=60
+autostart=true
+autorestart=true
+user=www-data
+numprocs=1
+redirect_stderr=true
+stdout_logfile=/var/log/supervisor/callsol-ports-queue.log
+stopwaitsecs=3600
+```
+Aplicar e verificar:
+```
+sudo supervisorctl reread && sudo supervisorctl update
+sudo supervisorctl status
+```
+
+Checklist — Forma A (portas):
+- UFW liberado: 8080 e 8081
+- Nginx sites ativos e `nginx -t` ok
+- Backend responde em `http://SEU_IP:8080/api/health`
+- Frontend acessível em `http://SEU_IP:8081`
+- `.env` com APP_URL, FRONTEND_URL e CORS_ALLOWED_ORIGINS corretos
+
+Observação: como as portas diferem, o navegador considera origens diferentes — mantenha `CORS_ALLOWED_ORIGINS=http://SEU_IP:8081` no backend (origem do frontend).
+
+Fluxo rápido (Forma A):
+1) Abrir UFW: `sudo ufw allow 8080/tcp && sudo ufw allow 8081/tcp`
+2) Backend:
+	- Ajustar `.env` (APP_URL=http://SEU_IP:8080, FRONTEND_URL=http://SEU_IP:8081, CORS_ALLOWED_ORIGINS=http://SEU_IP:8081, DB_*)
+	- `composer install`, `php artisan key:generate --force`, `php artisan migrate --force`, (opcional `db:seed`), `storage:link`, `config:cache route:cache view:cache`
+	- Nginx 8080 apontando para `/var/www/app-backend/public`; `sudo nginx -t && sudo systemctl reload nginx`
+3) Frontend:
+	- Build com `VITE_API_URL=http://SEU_IP:8080`
+	- Publicar `dist/` em `/var/www/app-frontend`
+	- Nginx 8081 servindo `/var/www/app-frontend`; `sudo nginx -t && sudo systemctl reload nginx`
+4) Testar:
+	- `curl -sS http://SEU_IP:8080/api/health` → deve retornar `{status: ok, db: up, ...}`
+	- Acessar `http://SEU_IP:8081` no navegador
+
+---
+
 ## HTTPS no Nginx (exemplos prontos)
 
 Use HTTPS em produção. Abaixo, exemplos de configuração com redirect de HTTP (porta 80) para HTTPS (porta 443) e server com certificados. Ajuste domínios e caminhos dos certificados.
