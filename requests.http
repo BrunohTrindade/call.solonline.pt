@@ -1,5 +1,11 @@
+@api = http://89.117.58.152:8080
+@frontend = http://89.117.58.152:8081
+
+### Health
+GET {{api}}/api/health
+
 ### Login
-POST http://127.0.0.1:8000/api/login
+POST {{api}}/api/login
 Content-Type: application/json
 
 {
@@ -11,19 +17,19 @@ Content-Type: application/json
 @token = {{login.response.body.$.token}}
 
 ### Me
-GET http://127.0.0.1:8000/api/me
+GET {{api}}/api/me
 Authorization: Bearer {{token}}
 
 ### Listar contatos (página 1)
-GET http://127.0.0.1:8000/api/contacts?page=1
+GET {{api}}/api/contacts?page=1
 Authorization: Bearer {{token}}
 
 ### Detalhe de um contato
-GET http://127.0.0.1:8000/api/contacts/1
+GET {{api}}/api/contacts/1
 Authorization: Bearer {{token}}
 
 ### Atualizar observação e marcar processado
-PUT http://127.0.0.1:8000/api/contacts/1
+PUT {{api}}/api/contacts/1
 Content-Type: application/json
 Authorization: Bearer {{token}}
 
@@ -33,7 +39,7 @@ Authorization: Bearer {{token}}
 
 ### Importar CSV (admin)
 # Use a extensão REST Client do VS Code e altere o caminho do arquivo abaixo
-POST http://127.0.0.1:8000/api/contacts/import
+POST {{api}}/api/contacts/import
 Authorization: Bearer {{token}}
 Content-Type: multipart/form-data; boundary=WebKitFormBoundary7MA4YWxkTrZu0gW
 
