@@ -9,6 +9,12 @@ use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\HealthController;
 
 Route::post('/login', [AuthController::class, 'login']);
+// Ajuda: se alguém chamar GET /api/login no navegador, retornamos orientação clara
+Route::get('/login', function () {
+    return response()->json([
+        'message' => 'Use POST /api/login com JSON {"email","password"}. Esta rota não aceita GET.'
+    ], 405);
+});
 Route::get('/health', [HealthController::class, 'index']);
 
 Route::middleware('auth:sanctum')->group(function () {

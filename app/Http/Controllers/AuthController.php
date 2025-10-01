@@ -29,6 +29,14 @@ class AuthController extends Controller
     // Login retorna token Sanctum
     public function login(Request $request)
     {
+        // Exigir JSON para evitar chamadas GET/FORM confundirem a rota
+        $contentType = $request->header('Content-Type') ?? '';
+        if (!str_starts_with(strtolower($contentType), 'application/json')) {
+            return response()->json([
+                'message' => 'Use Content-Type: application/json e envie {"email","password"} no corpo.'
+            ], 400);
+        }
+
         $credentials = $request->validate([
             'email' => ['required','email'],
             'password' => ['required','string'],
