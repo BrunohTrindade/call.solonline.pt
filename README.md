@@ -512,8 +512,17 @@ ADMIN_NAME=Admin
 Cenário para testes/início sem DNS: acessar por IP e portas diferentes.
 
 Resumo:
-- Backend/API: http://SEU_IP:8080
-- Frontend: http://SEU_IP:8081
+- Backend/API: http://SEU_IP:8080 (ou http://127.0.0.1:8080 em ambiente local)
+- Frontend: http://SEU_IP:8081 (ou http://127.0.0.1:8081 em ambiente local)
+
+TL;DR com IP real (exemplo do VPS informado):
+- BACKEND: http://89.117.58.152:8080 → endpoints: /api/health, /api/login, /api/contacts, etc.
+- FRONTEND: http://89.117.58.152:8081 → rotas do SPA como /login, /contatos
+
+Nota importante (localhost):
+- Quando usar 127.0.0.1, o endpoint de login é no backend: `http://127.0.0.1:8080/api/login`.
+- O host 8081 (frontend) não tem API por padrão; ele apenas serve arquivos estáticos do SPA. Por isso, `http://127.0.0.1:8081/api/login` vai retornar 404 a menos que você crie um proxy reverso.
+- Se preferir usar `/api` no próprio 8081 (para evitar CORS), adicione ao Nginx do frontend um proxy para o backend (veja a seção "Proxy opcional /api no 8081").
 
 ### Estrutura de pastas
 
@@ -607,6 +616,27 @@ Ativar site e recarregar:
 ```
 sudo ln -s /etc/nginx/sites-available/callsol-backend-8080 /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
+
+Apache (alternativa) — backend 8080
+```
+<VirtualHost *:8080>
+	ServerName 89.117.58.152
+	DocumentRoot /var/www/app-backend/public
+
+	<Directory /var/www/app-backend/public>
+		AllowOverride All
+		Require all granted
+	</Directory>
+
+	# PHP-FPM via proxy_fcgi
+	<FilesMatch "\.php$">
+		SetHandler "proxy:unix:/run/php/php8.2-fpm.sock|fcgi://localhost/"
+	</FilesMatch>
+
+	ErrorLog ${APACHE_LOG_DIR}/backend-8080-error.log
+	CustomLog ${APACHE_LOG_DIR}/backend-8080-access.log combined
+</VirtualHost>
+```
 ```
 
 ### Frontend na porta 8081
@@ -615,6 +645,7 @@ sudo nginx -t && sudo systemctl reload nginx
 ```
 # no projeto do frontend
 export VITE_API_URL=http://SEU_IP:8080
+# Em ambiente local, use: export VITE_API_URL=http://127.0.0.1:8080
 npm ci
 npm run build
 ```
@@ -636,6 +667,7 @@ server {
 		root /var/www/app-frontend;
 		index index.html;
 
+		# Fallback do SPA: garante que /login, /contacts etc. retornem index.html
 		location / { try_files $uri /index.html; }
 }
 ```
@@ -643,6 +675,37 @@ Ativar site e recarregar:
 ```
 sudo ln -s /etc/nginx/sites-available/callsol-frontend-8081 /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
+
+Apache (alternativa) — frontend 8081
+```
+<VirtualHost *:8081>
+	ServerName 89.117.58.152
+	DocumentRoot /var/www/app-frontend
+
+	<Directory /var/www/app-frontend>
+		Options Indexes FollowSymLinks
+		AllowOverride All
+		Require all granted
+	</Directory>
+
+	# Fallback do SPA no Apache
+	RewriteEngine On
+	RewriteCond %{REQUEST_FILENAME} !-f
+	RewriteCond %{REQUEST_FILENAME} !-d
+	RewriteRule ^ index.html [L]
+
+	ErrorLog ${APACHE_LOG_DIR}/frontend-8081-error.log
+	CustomLog ${APACHE_LOG_DIR}/frontend-8081-access.log combined
+</VirtualHost>
+```
+
+Proxy opcional /api (evita CORS):
+```
+<Location "/api/">
+	ProxyPass "http://127.0.0.1:8080/api/"
+	ProxyPassReverse "http://127.0.0.1:8080/api/"
+</Location>
+```
 ```
 
 ### Testes rápidos
@@ -694,6 +757,38 @@ Checklist — Forma A (portas):
 - `.env` com APP_URL, FRONTEND_URL e CORS_ALLOWED_ORIGINS corretos
 
 Observação: como as portas diferem, o navegador considera origens diferentes — mantenha `CORS_ALLOWED_ORIGINS=http://SEU_IP:8081` no backend (origem do frontend).
+
+Perguntas frequentes (Forma A):
+- “Era para ser http://127.0.0.1:8081/api/login?” → Não. O endpoint da API é servido pelo backend (8080), então é `http://127.0.0.1:8080/api/login`. O `:8081/login` é rota do SPA (frontend) para renderizar a página de login.
+- No frontend, defina `VITE_API_URL` para o backend (8080). O app chamará `fetch(
+	`${import.meta.env.VITE_API_URL}/api/...`
+)`.
+
+### Proxy opcional /api no 8081 (sem CORS)
+
+Se você quiser que o frontend chame `http://127.0.0.1:8081/api/...` (em vez de apontar diretamente para 8080), crie um proxy no Nginx do frontend:
+
+```
+server {
+	listen 8081;
+	server_name _;
+
+	root /var/www/app-frontend;
+	index index.html;
+
+	location / { try_files $uri /index.html; }
+
+	# Encaminha /api para o backend (8080)
+	location ^~ /api/ {
+		proxy_pass http://127.0.0.1:8080/api/;
+		proxy_set_header Host $host;
+		proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+		proxy_set_header X-Forwarded-Proto $scheme;
+	}
+}
+```
+
+Com isso, você pode configurar o frontend para usar `VITE_API_URL=/api` e não precisa de CORS entre 8081 → 8080.
 
 Fluxo rápido (Forma A):
 1) Abrir UFW: `sudo ufw allow 8080/tcp && sudo ufw allow 8081/tcp`
