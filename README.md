@@ -568,71 +568,7 @@ curl -sS https://api.seudominio.com/api/contacts -H "Authorization: Bearer $TOKE
 - Fila: mantenha um worker via Supervisor/Systemd.
 - Logs: `storage/logs/laravel.log` e logs do Nginx para troubleshooting.
 
-### Uploads grandes (Nginx/PHP)
 
-Para permitir importações maiores (CSV/XLSX):
-
-Nginx (no server):
-```
-client_max_body_size 100m;
-```
-
-PHP (php.ini, exemplo PHP 8.2):
-```
-upload_max_filesize = 100M
-post_max_size = 100M
-max_execution_time = 120
-```
-
-Recarregue serviços após ajustes: `sudo systemctl reload nginx` e `sudo systemctl restart php8.2-fpm`.
-
-### SSE (Server-Sent Events)
-
-Há endpoints SSE (`/api/events/...`). Em Nginx, assegure que não haja buffering excessivo:
-```
-location ^~ /api/events/ {
-	proxy_buffering off; # se houver proxy
-	# Para PHP-FPM direto, geralmente não é necessário. Evite cache para SSE.
-}
-```
-
-### Fila e agendamento
-
-- Supervisor para fila: `php artisan queue:work --tries=1 --timeout=60` (ou ajuste conforme volume).
-- Opcional: cron para tarefas recorrentes (ex.: `* * * * * cd /var/www/app-backend && php artisan schedule:run >> /dev/null 2>&1`).
-
-Exemplos de configuração do Supervisor (escolha UM, conforme a forma de deploy)
-
-Forma 1 (domínios distintos) — arquivo: `/etc/supervisor/conf.d/callsol-f1-queue.conf`
-```
-[program:callsol-f1-queue]
-command=/usr/bin/php /var/www/app-backend/artisan queue:work --sleep=3 --tries=1 --timeout=60
-autostart=true
-autorestart=true
-user=www-data
-numprocs=1
-redirect_stderr=true
-stdout_logfile=/var/log/supervisor/callsol-f1-queue.log
-stopwaitsecs=3600
-```
-
-Forma 2 (mesmo domínio com /api) — arquivo: `/etc/supervisor/conf.d/callsol-f2-queue.conf`
-```
-[program:callsol-f2-queue]
-command=/usr/bin/php /var/www/app/backend/artisan queue:work --sleep=3 --tries=1 --timeout=60
-autostart=true
-autorestart=true
-user=www-data
-numprocs=1
-redirect_stderr=true
-stdout_logfile=/var/log/supervisor/callsol-f2-queue.log
-stopwaitsecs=3600
-```
-
-Após criar o arquivo escolhido:
-- Recarregue e aplique: `sudo supervisorctl reread && sudo supervisorctl update`
-- Verifique: `sudo supervisorctl status`
-- Reinicie após deploys/alteração no .env: `sudo supervisorctl restart callsol-f1-queue` (ou `callsol-f2-queue`)
 
 #### Quando iniciar o Supervisor
 
@@ -718,61 +654,6 @@ ADMIN_EMAIL=admin@seudominio.com
 ADMIN_PASSWORD=trocar123
 ADMIN_NAME=Admin
 ```
-
-## CORS (duas formas de deploy)
-
-O projeto já está preparado para definir origens permitidas via variável `CORS_ALLOWED_ORIGINS` no `.env`. A configuração padrão em `config/cors.php` é:
-
-```
-'paths' => ['api/*', 'sanctum/csrf-cookie'],
-'allowed_methods' => ['*'],
-'allowed_origins' => array_filter(array_map('trim', explode(',', env('CORS_ALLOWED_ORIGINS', 'http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000')))),
-'allowed_origins_patterns' => [],
-'allowed_headers' => ['*'],
-'exposed_headers' => [],
-'max_age' => 0,
-'supports_credentials' => true,
-```
-
-Defina no `.env` conforme o seu cenário:
-
-- Forma 1 (domínios distintos):
-	- `CORS_ALLOWED_ORIGINS=https://app.seudominio.com`
-	- Se usar cookies com Sanctum: `SESSION_DOMAIN=.seudominio.com` e `SANCTUM_STATEFUL_DOMAINS=app.seudominio.com`
-
-- Forma 2 (mesmo domínio com /api):
-	- `CORS_ALLOWED_ORIGINS=https://app.seudominio.com` (opcional; por ser o mesmo domínio, CORS não é estritamente necessário, mas manter não causa problema)
-	- Se usar cookies com Sanctum: `SESSION_DOMAIN=.seudominio.com` e `SANCTUM_STATEFUL_DOMAINS=app.seudominio.com`
-
-Notas:
-- Para múltiplas origens, separe por vírgula: `CORS_ALLOWED_ORIGINS=https://app.seudominio.com,https://admin.seudominio.com`
-- Em desenvolvimento, os defaults incluem `http://localhost:5173` e `http://127.0.0.1:5173`.
-- Mesmo usando tokens Bearer (Sanctum Personal Access Tokens), ainda é necessário permitir a origem no CORS quando o frontend estiver em outro domínio.
-
-Exemplos prontos de `.env` para CORS:
-
-Forma 1 (domínios distintos):
-```
-CORS_ALLOWED_ORIGINS=https://app.seudominio.com
-SESSION_DOMAIN=.seudominio.com
-SANCTUM_STATEFUL_DOMAINS=app.seudominio.com
-SESSION_DRIVER=cookie
-SESSION_SECURE_COOKIE=true
-```
-
-Forma 2 (mesmo domínio com /api):
-```
-# CORS é opcional por ser o mesmo domínio, mas manter não causa problema
-CORS_ALLOWED_ORIGINS=https://app.seudominio.com
-SESSION_DOMAIN=.seudominio.com
-SANCTUM_STATEFUL_DOMAINS=app.seudominio.com
-SESSION_DRIVER=cookie
-SESSION_SECURE_COOKIE=true
-```
-
-Observações:
-- Se usar apenas tokens Bearer (Sanctum Personal Access Tokens) sem cookies, `SESSION_DOMAIN` e `SANCTUM_STATEFUL_DOMAINS` podem não ser necessários.
-- Para cookies funcionarem corretamente em produção sob HTTPS, `SESSION_SECURE_COOKIE=true` é recomendado.
 
 
 
@@ -981,9 +862,6 @@ Fluxo rápido (Forma A):
 
 ---
 
-## HTTPS no Nginx (exemplos prontos)
-
-Use HTTPS em produção. Abaixo, exemplos de configuração com redirect de HTTP (porta 80) para HTTPS (porta 443) e server com certificados. Ajuste domínios e caminhos dos certificados.
 
 ### Forma 1 (domínios distintos)
 
@@ -1044,47 +922,7 @@ server {
 }
 ```
 
-### Forma 2 (mesmo domínio com subpasta /api)
 
-```
-# Redirect HTTP → HTTPS
-server {
-	listen 80;
-	server_name app.seudominio.com;
-	return 301 https://$host$request_uri;
-}
-
-# HTTPS
-server {
-	listen 443 ssl http2;
-	server_name app.seudominio.com;
-
-	ssl_certificate /etc/letsencrypt/live/app.seudominio.com/fullchain.pem;
-	ssl_certificate_key /etc/letsencrypt/live/app.seudominio.com/privkey.pem;
-
-	# Frontend na raiz
-	root /var/www/app/frontend;
-	index index.html;
-	location / { try_files $uri /index.html; }
-
-	# Backend em /api (com trailing slash)
-	location ^~ /api/ {
-		alias /var/www/app/backend/public/;
-		index index.php;
-		try_files $uri $uri/ /index.php?$query_string;
-	}
-
-	# Bloco PHP separado para /api
-	location ~ ^/api/.*\.php$ {
-		alias /var/www/app/backend/public/;
-		include snippets/fastcgi-php.conf;
-		fastcgi_pass unix:/run/php/php8.2-fpm.sock;
-		fastcgi_param SCRIPT_FILENAME $request_filename;
-	}
-
-	location ~ /\.(?!well-known).* { deny all; }
-}
-```
 
 ### Certificados com Certbot (opcional)
 
@@ -1103,55 +941,7 @@ sudo certbot certonly --webroot -w /var/www/app-frontend -d app.seudominio.com
 sudo certbot renew --dry-run
 ```
 
-### Endurecimento e performance no Nginx (HSTS, gzip/brotli e Real IP)
 
-Habilite cabeçalhos de segurança, compressão e, quando atrás de CDN (ex.: Cloudflare), ajuste o Real IP. Exemplos prontos:
-
-HSTS e cabeçalhos de segurança básicos (coloque dentro do server HTTPS):
-```
-add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
-add_header X-Content-Type-Options nosniff;
-add_header X-Frame-Options SAMEORIGIN;
-add_header Referrer-Policy no-referrer-when-downgrade;
-add_header X-XSS-Protection "1; mode=block";
-```
-
-Gzip (alternativa: brotli se suportado):
-```
-gzip on;
-gzip_comp_level 5;
-gzip_min_length 1024;
-gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss image/svg+xml font/woff2;
-```
-
-Brotli (se o módulo estiver instalado):
-```
-brotli on;
-brotli_comp_level 5;
-brotli_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss image/svg+xml font/woff2;
-```
-
-Real IP atrás do Cloudflare (no contexto http { } ou no server, conforme sua distro):
-```
-set_real_ip_from 173.245.48.0/20;
-set_real_ip_from 103.21.244.0/22;
-set_real_ip_from 103.22.200.0/22;
-set_real_ip_from 103.31.4.0/22;
-set_real_ip_from 141.101.64.0/18;
-set_real_ip_from 108.162.192.0/18;
-set_real_ip_from 190.93.240.0/20;
-set_real_ip_from 188.114.96.0/20;
-set_real_ip_from 197.234.240.0/22;
-set_real_ip_from 198.41.128.0/17;
-set_real_ip_from 162.158.0.0/15;
-set_real_ip_from 104.16.0.0/13;
-set_real_ip_from 104.24.0.0/14;
-set_real_ip_from 172.64.0.0/13;
-set_real_ip_from 131.0.72.0/22;
-real_ip_header CF-Connecting-IP;
-```
-
-Observação: mantenha a lista de IPs da Cloudflare atualizada (https://www.cloudflare.com/ips/). Se usar outra CDN, ajuste conforme a documentação do provedor.
 
 ## Variáveis .env exemplo (backend)
 
