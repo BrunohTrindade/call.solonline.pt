@@ -6,8 +6,10 @@ use App\Http\Controllers\AuthController;
 use App\Http\Controllers\ContactController;
 use App\Http\Controllers\EventController;
 use App\Http\Controllers\SettingsController;
+use App\Http\Controllers\HealthController;
 
 Route::post('/login', [AuthController::class, 'login']);
+Route::get('/health', [HealthController::class, 'index']);
 
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/me', [AuthController::class, 'me']);
