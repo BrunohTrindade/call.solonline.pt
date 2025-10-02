@@ -72,7 +72,8 @@ class ContactController extends Controller
             $qb->whereNotNull('processed_at');
         }
 
-        $perPage = (int) $request->input('per_page', 50);
+    // Aceita per_page, perPage ou limit
+    $perPage = (int) ($request->input('per_page', $request->input('perPage', $request->input('limit', 50))));
         if ($perPage < 1) { $perPage = 1; }
         if ($perPage > 100) { $perPage = 100; }
 
@@ -118,7 +119,7 @@ class ContactController extends Controller
             ->orderByRaw('CASE WHEN numero IS NULL THEN 1 ELSE 0 END')
             ->orderBy('numero')
             ->orderBy('id')
-            ->paginate($perPage);
+            ->paginate($perPage, ['*'], 'page', $currentPage);
 
         return response()->json($resp)
             ->header('Cache-Control','private, max-age=5, no-transform')
