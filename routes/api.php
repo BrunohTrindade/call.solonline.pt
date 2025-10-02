@@ -23,7 +23,11 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // admin only
     Route::middleware('admin')->group(function () {
+        // users admin
+        Route::get('/users', [AuthController::class, 'listUsers']);
         Route::post('/users', [AuthController::class, 'createUser']);
+        Route::put('/users/{user}', [AuthController::class, 'updateUser']);
+        Route::delete('/users/{user}', [AuthController::class, 'deleteUser']);
         // importações só para admin
         Route::post('/contacts/import', [ContactController::class, 'import']);
         Route::post('/contacts/import/background', [ContactController::class, 'importBackground']);
