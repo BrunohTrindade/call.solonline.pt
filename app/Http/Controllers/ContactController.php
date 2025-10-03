@@ -114,7 +114,7 @@ class ContactController extends Controller
         }
 
         $resp = (clone $qb)
-            ->select(['id','numero','nome','email','empresa','telefone','nif','processed_at','created_at','observacao'])
+            ->select(['id','numero','nome','email','empresa','telefone','nif','processed_at','created_at','observacao','info_adicional'])
             // Usa ordenação pelo campo indexado 'numero' (com fallback para id)
             ->orderByRaw('CASE WHEN numero IS NULL THEN 1 ELSE 0 END')
             ->orderBy('numero')
@@ -131,24 +131,45 @@ class ContactController extends Controller
         return $contact;
     }
 
-    // Atualiza observação e marca como processado apenas quando houver gravação de observação
+    // Atualiza observação e marca como processado (primeira gravação). Após isso, usuários comuns só podem usar info_adicional.
     public function update(Request $request, Contact $contact)
     {
         $data = $request->validate([
             'observacao' => ['nullable','string'],
+            'info_adicional' => ['nullable','string'],
         ]);
-        $newObs = array_key_exists('observacao', $data) ? (string)($data['observacao'] ?? '') : ($contact->observacao ?? '');
+
+        $user = $request->user();
+        $isAdmin = (bool) optional($user)->is_admin;
+
+        // Regras:
+        // - Antes da primeira gravação (processed_at == null): pode escrever em 'observacao'.
+        //   Ao escrever texto não vazio pela primeira vez, marca processed_at/processed_by.
+        // - Depois de processed_at != null: somente admin pode alterar 'observacao'.
+        //   Usuários comuns devem usar 'info_adicional'.
+
+        $wantsToChangeObs = array_key_exists('observacao', $data);
+        $newObs = $wantsToChangeObs ? (string)($data['observacao'] ?? '') : ($contact->observacao ?? '');
         $newObsTrim = trim($newObs);
 
-        // Atualiza observação sempre que enviada (inclusive para limpar),
-        // porém só marca como processado se houver conteúdo na observação.
-        $contact->observacao = $newObs;
+        if ($contact->processed_at !== null && $wantsToChangeObs && !$isAdmin) {
+            // Bloqueia alteração de observação por não-admin após primeira gravação
+            unset($data['observacao']);
+        }
 
-        // Regra: um contato importado fica pendente até que o usuário grave alguma observação.
-        // Portanto, apenas quando há texto (não vazio) é que marcamos processed_at/processado.
-        if ($newObsTrim !== '' && $contact->processed_at === null) {
+        // Aplicar mudanças permitidas
+        if (array_key_exists('observacao', $data)) {
+            $contact->observacao = $newObs;
+        }
+
+        if (array_key_exists('info_adicional', $data)) {
+            $contact->info_adicional = (string)($data['info_adicional'] ?? '');
+        }
+
+        // Primeira gravação: marcar processado quando observacao tiver conteúdo pela primeira vez
+        if ($newObsTrim !== '' && $contact->processed_at === null && $wantsToChangeObs) {
             $contact->processed_at = now();
-            $contact->processed_by = optional($request->user())->id;
+            $contact->processed_by = optional($user)->id;
         }
 
         $contact->save();

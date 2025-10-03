@@ -13,6 +13,7 @@ class Contact extends Model
         'email',
         'nif',
         'observacao',
+        'info_adicional',
         'processed_at',
         'processed_by',
         'numero',

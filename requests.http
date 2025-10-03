@@ -67,6 +67,15 @@ Authorization: Bearer {{token}}
   "observacao": "Contato realizado, aguardando retorno."
 }
 
+### Após primeira gravação (não-admin): gravar somente em info_adicional
+PUT {{api}}/api/contacts/1
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "info_adicional": "Ligação de acompanhamento realizada em 03/10."
+}
+
 ### Importar CSV (admin)
 # Use a extensão REST Client do VS Code e altere o caminho do arquivo abaixo
 POST {{api}}/api/contacts/import
