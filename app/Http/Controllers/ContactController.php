@@ -16,24 +16,7 @@ class ContactController extends Controller
         // ETag rápido baseado apenas no marcador global de mudanças
         $cc = Cache::get('contacts_last_change');
         $fastEtag = 'W/"stats-v2-'.md5('cc:'.($cc ?? 'null')).'"';
-        if ($request->header('If-None-Match') === $fastEtag) {
-            // Guard: se o cache indicar >0 mas a tabela ficou vazia por fora do app (ex: limpeza manual),
-            // devolve estatísticas zeradas imediatamente para evitar 304 enganoso.
-            $cached = Cache::get('contacts_stats');
-            $cachedTotal = is_array($cached) ? (int)($cached['total'] ?? 0) : 0;
-            if ($cachedTotal > 0) {
-                $totalNow = (int) Contact::count();
-                if ($totalNow === 0) {
-                    $data = ['total' => 0, 'processed' => 0, 'pending' => 0];
-                    Cache::put('contacts_stats', $data, 10);
-                    return response()->json($data)
-                        ->header('Cache-Control','private, max-age=10, no-transform')
-                        ->header('ETag', $fastEtag);
-                }
-            }
-            // Nada mudou desde a última resposta: evita consultas caras
-            return response('', 304, ['ETag' => $fastEtag]);
-        }
+        // Compat: não retornar 304; sempre retornar JSON com ETag (melhora suporte em mobile)
 
         $data = Cache::remember('contacts_stats', 10, function(){
             $total = Contact::count();
@@ -88,30 +71,7 @@ class ContactController extends Controller
             'cc:'.($lastChangeMarker ?? 'null'),
         ]);
         $fastEtag = 'W/"contacts-v2-'.md5($fastPayload).'"';
-        if ($request->header('If-None-Match') === $fastEtag) {
-            // Se a tabela tiver sido esvaziada (ex: exclusão em massa), evite 304 enganoso
-            // somente quando página 1 e sem busca para não custar caro em todos os cenários
-            if ($currentPage === 1 && $search === '' && (empty($status) || $status === 'all')) {
-                $totalNow = (int) Contact::count();
-                if ($totalNow === 0) {
-                    $empty = [
-                        'data' => [],
-                        'links' => [],
-                        'meta' => [
-                            'current_page' => 1,
-                            'last_page' => 1,
-                            'per_page' => $perPage,
-                            'total' => 0,
-                        ],
-                    ];
-                    return response()->json($empty)
-                        ->header('Cache-Control','private, max-age=5, no-transform')
-                        ->header('ETag', $fastEtag);
-                }
-            }
-            // Nada mudou desde a última resposta para este conjunto de filtros/página
-            return response('', 304, ['ETag' => $fastEtag]);
-        }
+        // Compat: não retornar 304; sempre responder com JSON, mantendo ETag para futuros usos.
 
         $resp = (clone $qb)
             ->select(['id','numero','nome','email','empresa','telefone','nif','processed_at','created_at','observacao','info_adicional'])
