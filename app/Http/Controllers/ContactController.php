@@ -35,7 +35,7 @@ class ContactController extends Controller
             return response('', 304, ['ETag' => $fastEtag]);
         }
 
-        $data = Cache::remember('contacts_stats', 10, function(){
+        $data = Cache::remember('contacts_stats', (int) config('performance.contacts_stats_cache_ttl', 10), function(){
             $total = Contact::count();
             $processed = Contact::whereNotNull('processed_at')->count();
             return [
@@ -57,14 +57,39 @@ class ContactController extends Controller
         $status = $request->input('status');
         $qb = Contact::query();
         if ($search !== '') {
-            $qb->where(function($w) use ($search) {
-                $like = '%'.$search.'%';
-                $w->where('nome', 'like', $like)
-                  ->orWhere('email', 'like', $like)
-                  ->orWhere('empresa', 'like', $like)
-                  ->orWhere('telefone', 'like', $like)
-                  ->orWhere('nif', 'like', $like);
-            });
+            $useFulltext = (bool) config('performance.contacts_search_fulltext', false);
+            $driver = DB::getDriverName();
+            if ($useFulltext && in_array($driver, ['mysql','mariadb'], true)) {
+                // Transforma busca em termos com prefixo (BOOLEAN MODE) para acelerar e aproximar do LIKE
+                $terms = preg_split('/\s+/', trim($search));
+                $terms = array_values(array_filter(array_map(function($t){
+                    $t = trim($t);
+                    return strlen($t) >= 2 ? '+' . addcslashes($t, '+-><()~*:\"@') . '*': '';
+                }, $terms)));
+                if (!empty($terms)) {
+                    $against = implode(' ', $terms);
+                    $qb->whereRaw('MATCH (nome,email,empresa,telefone) AGAINST (? IN BOOLEAN MODE)', [$against]);
+                } else {
+                    // Fallback para LIKE se termos inválidos
+                    $qb->where(function($w) use ($search) {
+                        $like = '%'.$search.'%';
+                        $w->where('nome', 'like', $like)
+                          ->orWhere('email', 'like', $like)
+                          ->orWhere('empresa', 'like', $like)
+                          ->orWhere('telefone', 'like', $like)
+                          ->orWhere('nif', 'like', $like);
+                    });
+                }
+            } else {
+                $qb->where(function($w) use ($search) {
+                    $like = '%'.$search.'%';
+                    $w->where('nome', 'like', $like)
+                      ->orWhere('email', 'like', $like)
+                      ->orWhere('empresa', 'like', $like)
+                      ->orWhere('telefone', 'like', $like)
+                      ->orWhere('nif', 'like', $like);
+                });
+            }
         }
         if ($status === 'pending') {
             $qb->whereNull('processed_at');
@@ -113,13 +138,25 @@ class ContactController extends Controller
             return response('', 304, ['ETag' => $fastEtag]);
         }
 
-        $resp = (clone $qb)
-            ->select(['id','numero','nome','email','empresa','telefone','nif','processed_at','created_at','observacao','info_adicional'])
-            // Usa ordenação pelo campo indexado 'numero' (com fallback para id)
-            ->orderByRaw('CASE WHEN numero IS NULL THEN 1 ELSE 0 END')
-            ->orderBy('numero')
-            ->orderBy('id')
-            ->paginate($perPage, ['*'], 'page', $currentPage);
+        // Microcache de listagem: chave considera filtros/página e marcador global de mudanças
+        $ttl = (int) config('performance.contacts_index_cache_ttl', 5);
+        $cacheKey = 'contacts:index:'.md5(json_encode([
+            'page' => $currentPage,
+            'per' => $perPage,
+            'status' => $status,
+            'q' => $search,
+            'cc' => $lastChangeMarker,
+        ]));
+
+        $resp = Cache::remember($cacheKey, $ttl, function () use ($qb, $perPage, $currentPage) {
+            return (clone $qb)
+                ->select(['id','numero','nome','email','empresa','telefone','nif','processed_at','created_at','observacao','info_adicional'])
+                // Usa ordenação pelo campo indexado 'numero' (com fallback para id)
+                ->orderByRaw('CASE WHEN numero IS NULL THEN 1 ELSE 0 END')
+                ->orderBy('numero')
+                ->orderBy('id')
+                ->paginate($perPage, ['*'], 'page', $currentPage);
+        });
 
         return response()->json($resp)
             ->header('Cache-Control','private, max-age=5, no-transform')
