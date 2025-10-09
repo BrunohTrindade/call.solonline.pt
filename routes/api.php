@@ -27,10 +27,14 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/users', [AuthController::class, 'listUsers']);
         Route::post('/users', [AuthController::class, 'createUser']);
         Route::put('/users/{user}', [AuthController::class, 'updateUser']);
+    Route::put('/users/{user}/active', [AuthController::class, 'setUserActive']);
         Route::delete('/users/{user}', [AuthController::class, 'deleteUser']);
         // importações só para admin
         Route::post('/contacts/import', [ContactController::class, 'import']);
         Route::post('/contacts/import/background', [ContactController::class, 'importBackground']);
+    // visibilidade por contato (admin)
+    Route::get('/contacts/{contact}/visibility', [ContactController::class, 'visibilityList']);
+    Route::put('/contacts/{contact}/visibility', [ContactController::class, 'visibilityUpdate']);
         // settings (admin)
         Route::put('/settings/script', [SettingsController::class, 'saveScript']);
     });

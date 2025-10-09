@@ -10,12 +10,48 @@ use Illuminate\Support\Facades\Cache;
 
 class ContactController extends Controller
 {
+    // Lista usuários com acesso (visibilidade) a um contato - admin
+    public function visibilityList(Request $request, Contact $contact)
+    {
+        // Apenas admin pode usar; middleware admin já protege a rota
+        $ids = \DB::table('contact_user')->where('contact_id', $contact->id)->pluck('user_id');
+        return response()->json(['user_ids' => array_values($ids->toArray())]);
+    }
+
+    // Define usuários com acesso (substitui conjunto) - admin
+    public function visibilityUpdate(Request $request, Contact $contact)
+    {
+        $data = $request->validate([
+            'user_ids' => ['array'],
+            'user_ids.*' => ['integer','exists:users,id'],
+        ]);
+        $ids = $data['user_ids'] ?? [];
+        \DB::beginTransaction();
+        try {
+            \DB::table('contact_user')->where('contact_id', $contact->id)->delete();
+            if (!empty($ids)) {
+                $rows = [];
+                foreach ($ids as $uid) {
+                    $rows[] = [ 'contact_id' => $contact->id, 'user_id' => (int)$uid ];
+                }
+                \DB::table('contact_user')->insert($rows);
+            }
+            \DB::commit();
+        } catch (\Throwable $e) {
+            \DB::rollBack();
+            throw $e;
+        }
+        return response()->json(['user_ids' => $ids]);
+    }
     // Estatísticas: total, processados, pendentes com ETag
     public function stats(Request $request)
     {
+        $user = $request->user();
+        $isAdmin = (bool) optional($user)->is_admin || (optional($user)->role ?? '') === 'admin';
+        $isComercial = (optional($user)->role ?? '') === 'comercial';
         // ETag rápido baseado apenas no marcador global de mudanças
         $cc = Cache::get('contacts_last_change');
-        $fastEtag = 'W/"stats-v2-'.md5('cc:'.($cc ?? 'null')).'"';
+        $fastEtag = 'W/"stats-v2-'.md5('cc:'.($cc ?? 'null').'|uid:'.(optional($user)->id ?? 0)).'"';
         if ($request->header('If-None-Match') === $fastEtag) {
             // Guard: se o cache indicar >0 mas a tabela ficou vazia por fora do app (ex: limpeza manual),
             // devolve estatísticas zeradas imediatamente para evitar 304 enganoso.
@@ -35,13 +71,20 @@ class ContactController extends Controller
             return response('', 304, ['ETag' => $fastEtag]);
         }
 
-        $data = Cache::remember('contacts_stats', (int) config('performance.contacts_stats_cache_ttl', 10), function(){
-            $total = Contact::count();
-            $processed = Contact::whereNotNull('processed_at')->count();
+        $cacheKey = 'contacts_stats:uid:'.(optional($user)->id ?? 0);
+        $data = Cache::remember($cacheKey, (int) config('performance.contacts_stats_cache_ttl', 10), function() use ($isAdmin, $isComercial, $user) {
+            if ($isAdmin || !$isComercial) {
+                $total = Contact::count();
+                $processed = Contact::whereNotNull('processed_at')->count();
+            } else {
+                $sub = \DB::table('contact_user')->select('contact_id')->where('user_id', optional($user)->id ?? 0);
+                $total = Contact::whereIn('id', $sub)->count();
+                $processed = Contact::whereIn('id', $sub)->whereNotNull('processed_at')->count();
+            }
             return [
-                'total' => $total,
-                'processed' => $processed,
-                'pending' => max(0, $total - $processed),
+                'total' => (int) $total,
+                'processed' => (int) $processed,
+                'pending' => max(0, (int)$total - (int)$processed),
             ];
         });
 
@@ -55,7 +98,19 @@ class ContactController extends Controller
     {
         $search = trim((string) $request->input('q', ''));
         $status = $request->input('status');
+    $user = $request->user();
+    $isAdmin = (bool) optional($user)->is_admin || (optional($user)->role ?? '') === 'admin';
+    $isComercial = (optional($user)->role ?? '') === 'comercial';
         $qb = Contact::query();
+
+        // Comercial só vê contatos explicitamente atribuídos; normal vê todos
+        if ($isComercial) {
+            $qb->whereIn('contacts.id', function($sub) use ($user) {
+                $sub->from('contact_user')
+                    ->select('contact_id')
+                    ->where('user_id', optional($user)->id ?? 0);
+            });
+        }
         if ($search !== '') {
             $useFulltext = (bool) config('performance.contacts_search_fulltext', false);
             $driver = DB::getDriverName();
@@ -111,6 +166,7 @@ class ContactController extends Controller
             'status:'.($status ?? ''),
             'q:'.$search,
             'cc:'.($lastChangeMarker ?? 'null'),
+            'uid:'.(optional($user)->id ?? 0),
         ]);
         $fastEtag = 'W/"contacts-v2-'.md5($fastPayload).'"';
         if ($request->header('If-None-Match') === $fastEtag) {
@@ -146,15 +202,20 @@ class ContactController extends Controller
             'status' => $status,
             'q' => $search,
             'cc' => $lastChangeMarker,
+            'uid' => optional($user)->id ?? 0,
         ]));
 
         $resp = Cache::remember($cacheKey, $ttl, function () use ($qb, $perPage, $currentPage) {
             return (clone $qb)
                 ->select(['id','numero','nome','email','empresa','telefone','nif','processed_at','created_at','observacao','info_adicional'])
-                // Usa ordenação pelo campo indexado 'numero' (com fallback para id)
-                ->orderByRaw('CASE WHEN numero IS NULL THEN 1 ELSE 0 END')
-                ->orderBy('numero')
-                ->orderBy('id')
+                // Ordenação: pendentes primeiro, processados por último
+                ->orderByRaw('CASE WHEN processed_at IS NULL THEN 0 ELSE 1 END ASC')
+                // Dentro dos pendentes: mais novos primeiro (created_at desc, depois id desc)
+                ->orderByRaw('CASE WHEN processed_at IS NULL THEN created_at ELSE NULL END DESC')
+                ->orderByRaw('CASE WHEN processed_at IS NULL THEN id ELSE NULL END DESC')
+                // Dentro dos processados: mais antigos primeiro (processed_at asc), depois id asc
+                ->orderByRaw('CASE WHEN processed_at IS NOT NULL THEN processed_at ELSE NULL END ASC')
+                ->orderByRaw('CASE WHEN processed_at IS NOT NULL THEN id ELSE NULL END ASC')
                 ->paginate($perPage, ['*'], 'page', $currentPage);
         });
 
@@ -165,23 +226,37 @@ class ContactController extends Controller
 
     public function show(Contact $contact)
     {
+        $user = request()->user();
+        $isAdmin = (bool) optional($user)->is_admin || (optional($user)->role ?? '') === 'admin';
+        $isComercial = (optional($user)->role ?? '') === 'comercial';
+        if ($isComercial) {
+            $has = \DB::table('contact_user')
+                ->where('user_id', optional($user)->id ?? 0)
+                ->where('contact_id', $contact->id)
+                ->exists();
+            if (!$has) {
+                return response()->json(['message' => 'Acesso negado a este contato'], 403);
+            }
+        }
         return $contact;
     }
 
     // Atualiza observação e marca como processado (primeira gravação). Após isso, usuários comuns só podem usar info_adicional.
     public function update(Request $request, Contact $contact)
     {
+        $user = $request->user();
+        $isAdmin = (bool) optional($user)->is_admin || (optional($user)->role ?? '') === 'admin';
+        $isComercial = (optional($user)->role ?? '') === 'comercial';
+        if ($isComercial) {
+            return response()->json(['message' => 'Usuário comercial não pode editar registros'], 403);
+        }
+
         $data = $request->validate([
             'observacao' => ['nullable','string'],
             'info_adicional' => ['nullable','string'],
         ]);
 
-        $user = $request->user();
-        $isAdmin = (bool) optional($user)->is_admin;
 
-        // Regras:
-        // - Antes da primeira gravação (processed_at == null): pode escrever em 'observacao'.
-        //   Ao escrever texto não vazio pela primeira vez, marca processed_at/processed_by.
         // - Depois de processed_at != null: somente admin pode alterar 'observacao'.
         //   Usuários comuns devem usar 'info_adicional'.
 
@@ -218,6 +293,12 @@ class ContactController extends Controller
     // Exclui e renumera
     public function destroy(Request $request, Contact $contact)
     {
+        $user = $request->user();
+        $isAdmin = (bool) optional($user)->is_admin || (optional($user)->role ?? '') === 'admin';
+        $isComercial = (optional($user)->role ?? '') === 'comercial';
+        if ($isComercial) {
+            return response()->json(['message' => 'Usuário comercial não pode excluir registros'], 403);
+        }
         DB::beginTransaction();
         try {
             $numero = $contact->numero;

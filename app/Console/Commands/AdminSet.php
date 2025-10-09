@@ -44,6 +44,7 @@ class AdminSet extends Command
                 'email' => $email,
                 'password' => Hash::make($password),
                 'is_admin' => $isAdmin,
+                'role' => $isAdmin ? 'admin' : 'normal',
             ]);
             $this->info("Usuário criado: {$user->email} (admin=".($isAdmin?'sim':'não').")");
             return self::SUCCESS;
@@ -56,6 +57,7 @@ class AdminSet extends Command
         }
         if ($user->is_admin !== $isAdmin) {
             $user->is_admin = $isAdmin;
+            $user->role = $isAdmin ? 'admin' : ($user->role === 'admin' ? 'normal' : $user->role);
             $changed = true;
         }
         if ($name && $name !== $user->name) {

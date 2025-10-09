@@ -22,9 +22,19 @@ class AuthController extends Controller
 
         $query = User::query()
             ->orderBy('id', 'asc')
-            ->select(['id','name','email','is_admin','created_at','updated_at']);
+            ->select(['id','name','email','is_admin','role','active','created_at','updated_at']);
 
-        return $query->paginate($perPage, ['*'], 'page', $page);
+        $result = $query->paginate($perPage, ['*'], 'page', $page);
+        $result->getCollection()->transform(function ($u) {
+            $role = $u->role ?? ($u->is_admin ? 'admin' : 'normal');
+            $isActive = (bool) ($u->active ?? true);
+            return array_merge($u->toArray(), [
+                'is_commercial' => $role === 'comercial',
+                'is_active' => $isActive,
+                'status' => $isActive ? 'active' : 'inactive',
+            ]);
+        });
+        return response()->json($result);
     }
 
     // Admin cria usuários internos
@@ -34,12 +44,22 @@ class AuthController extends Controller
             'name' => ['required','string','max:255'],
             'email' => ['required','email','max:255', Rule::unique('users','email')],
             'password' => ['required','string','min:6'],
+            'role' => ['sometimes','in:admin,normal,comercial'],
+            'is_commercial' => ['sometimes','boolean'],
+            'active' => ['sometimes','boolean'],
         ]);
+        // Determinar role a partir de role explícito, is_admin e is_commercial
+        $isAdminFlag = $request->boolean('is_admin');
+        $isCommercialFlag = $request->boolean('is_commercial');
+        $resolvedRole = $data['role']
+            ?? ($isAdminFlag ? 'admin' : ($isCommercialFlag ? 'comercial' : 'normal'));
         $user = User::create([
             'name' => $data['name'],
             'email' => $data['email'],
             'password' => Hash::make($data['password']),
-            'is_admin' => $request->boolean('is_admin'),
+            'is_admin' => $isAdminFlag,
+            'role' => $resolvedRole,
+            'active' => array_key_exists('active', $data) ? (bool)$data['active'] : true,
         ]);
         return response()->json($user, 201);
     }
@@ -52,6 +72,9 @@ class AuthController extends Controller
             'email' => ['sometimes','required','email','max:255', Rule::unique('users','email')->ignore($user->id)],
             'password' => ['nullable','string','min:6'],
             'is_admin' => ['sometimes','boolean'],
+            'role' => ['sometimes','in:admin,normal,comercial'],
+            'is_commercial' => ['sometimes','boolean'],
+            'active' => ['sometimes','boolean'],
         ]);
 
         if (array_key_exists('name', $data)) {
@@ -62,6 +85,20 @@ class AuthController extends Controller
         }
         if (array_key_exists('is_admin', $data)) {
             $user->is_admin = (bool) $data['is_admin'];
+        }
+        if (array_key_exists('active', $data)) {
+            $user->active = (bool) $data['active'];
+        }
+        // Resolver role conforme prioridade: role explícito > is_admin > is_commercial
+        if (array_key_exists('role', $data)) {
+            $user->role = $data['role'];
+        } else {
+            $isCommercialFlag = $request->has('is_commercial') ? $request->boolean('is_commercial') : null;
+            if (array_key_exists('is_admin', $data)) {
+                $user->role = $user->is_admin ? 'admin' : ($isCommercialFlag === true ? 'comercial' : ($isCommercialFlag === false ? 'normal' : ($user->role ?? 'normal')));
+            } elseif ($isCommercialFlag !== null) {
+                $user->role = $isCommercialFlag ? 'comercial' : ($user->role === 'comercial' ? 'normal' : ($user->role ?? 'normal'));
+            }
         }
         if (!empty($data['password'])) {
             $user->password = Hash::make($data['password']);
@@ -84,6 +121,23 @@ class AuthController extends Controller
         return response()->json(['message' => 'Usuário removido']);
     }
 
+    // Ativa/Desativa usuário (admin)
+    public function setUserActive(Request $request, User $user)
+    {
+        $data = $request->validate([
+            'active' => ['required','boolean'],
+        ]);
+        $user->active = (bool) $data['active'];
+        $user->save();
+        $isActive = (bool) $user->active;
+        return response()->json([
+            'id' => $user->id,
+            'active' => $isActive,
+            'is_active' => $isActive,
+            'status' => $isActive ? 'active' : 'inactive',
+        ]);
+    }
+
     // Login retorna token Sanctum
     public function login(Request $request)
     {
@@ -103,16 +157,29 @@ class AuthController extends Controller
         if (!$user || !Hash::check($credentials['password'], $user->password)) {
             return response()->json(['message' => 'Credenciais inválidas'], 422);
         }
+        if (property_exists($user, 'active') && $user->active === false) {
+            return response()->json(['message' => 'Usuário inativo'], 403);
+        }
         $token = $user->createToken('auth')->plainTextToken;
         return response()->json([
             'token' => $token,
-            'user' => $user->only(['id','name','email','is_admin']),
+            'user' => array_merge($user->only(['id','name','email','is_admin','role','active']), [
+                'is_commercial' => ($user->role ?? '') === 'comercial',
+                'is_active' => (bool) ($user->active ?? true),
+                'status' => (bool)($user->active ?? true) ? 'active' : 'inactive',
+            ]),
         ]);
     }
 
     public function me(Request $request)
     {
-        return $request->user();
+        $u = $request->user();
+        if (!$u) { return response()->json(null, 401); }
+        return response()->json(array_merge($u->only(['id','name','email','is_admin','role','active','created_at','updated_at']), [
+            'is_commercial' => ($u->role ?? '') === 'comercial',
+            'is_active' => (bool) ($u->active ?? true),
+            'status' => (bool)($u->active ?? true) ? 'active' : 'inactive',
+        ]));
     }
 
     public function logout(Request $request)

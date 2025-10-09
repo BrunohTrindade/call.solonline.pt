@@ -23,6 +23,8 @@ class User extends Authenticatable
         'email',
         'password',
         'is_admin',
+        'role',
+        'active',
     ];
 
     /**
@@ -46,6 +48,23 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'is_admin' => 'boolean',
+            'role' => 'string',
+            'active' => 'boolean',
         ];
+    }
+
+    public function isAdmin(): bool
+    {
+        return (bool) ($this->is_admin ?? false) || ($this->role ?? '') === 'admin';
+    }
+
+    public function isComercial(): bool
+    {
+        return ($this->role ?? '') === 'comercial';
+    }
+
+    public function visibleContacts()
+    {
+        return $this->belongsToMany(Contact::class, 'contact_user', 'user_id', 'contact_id');
     }
 }

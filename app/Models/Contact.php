@@ -22,4 +22,9 @@ class Contact extends Model
     protected $casts = [
         'processed_at' => 'datetime',
     ];
+
+    public function viewers()
+    {
+        return $this->belongsToMany(User::class, 'contact_user', 'contact_id', 'user_id');
+    }
 }
