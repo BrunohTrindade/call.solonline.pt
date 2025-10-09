@@ -12,6 +12,26 @@ class AuthController extends Controller
     // Lista usuários (admin) com paginação simples
     public function listUsers(Request $request)
     {
+        // all=true retorna todos sem paginação
+        $all = filter_var($request->query('all', false), FILTER_VALIDATE_BOOLEAN);
+
+        $query = User::query()
+            ->orderBy('id', 'asc')
+            ->select(['id','name','email','is_admin','role','active','created_at','updated_at']);
+
+        if ($all) {
+            $items = $query->get()->map(function ($u) {
+                $role = $u->role ?? ($u->is_admin ? 'admin' : 'normal');
+                $isActive = (bool) ($u->active ?? true);
+                return array_merge($u->toArray(), [
+                    'is_commercial' => $role === 'comercial',
+                    'is_active' => $isActive,
+                    'status' => $isActive ? 'active' : 'inactive',
+                ]);
+            });
+            return response()->json([ 'data' => array_values($items->toArray()), 'meta' => [ 'total' => count($items) ] ]);
+        }
+
         // Aceita per_page | perPage | limit e page (consistente com contatos)
         $perPage = $request->integer('per_page')
             ?? $request->integer('perPage')
@@ -19,10 +39,6 @@ class AuthController extends Controller
             ?? 15;
         $perPage = max(1, min(100, (int) $perPage));
         $page = max(1, (int) $request->query('page', 1));
-
-        $query = User::query()
-            ->orderBy('id', 'asc')
-            ->select(['id','name','email','is_admin','role','active','created_at','updated_at']);
 
         $result = $query->paginate($perPage, ['*'], 'page', $page);
         $result->getCollection()->transform(function ($u) {

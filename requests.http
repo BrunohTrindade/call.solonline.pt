@@ -24,6 +24,18 @@ Authorization: Bearer {{token}}
 GET {{api}}/api/users?page=1&per_page=10
 Authorization: Bearer {{token}}
 
+### Listar usuários (admin) — todos em uma página (per_page=1000)
+GET {{api}}/api/users?page=1&per_page=1000
+Authorization: Bearer {{token}}
+
+### (Opcional) Listar usuários sem per_page para ver o default atual
+GET {{api}}/api/users
+Authorization: Bearer {{token}}
+
+### (Opcional) Listar todos sem paginação (?all=true)
+GET {{api}}/api/users?all=true
+Authorization: Bearer {{token}}
+
 ### Criar usuário (admin)
 POST {{api}}/api/users
 Content-Type: application/json
