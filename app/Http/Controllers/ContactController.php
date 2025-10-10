@@ -18,14 +18,29 @@ class ContactController extends Controller
         return response()->json(['user_ids' => array_values($ids->toArray())]);
     }
 
-    // Define usuários com acesso (substitui conjunto) - admin
+    // Define usuários com acesso (substitui conjunto) - admin e usuário normal
     public function visibilityUpdate(Request $request, Contact $contact)
     {
+        // Bloquear usuário comercial de alterar visibilidade
+        $actor = $request->user();
+        if ((optional($actor)->role ?? '') === 'comercial') {
+            return response()->json(['message' => 'Usuário comercial não pode alterar visibilidade'], 403);
+        }
         $data = $request->validate([
             'user_ids' => ['array'],
             'user_ids.*' => ['integer','exists:users,id'],
         ]);
         $ids = $data['user_ids'] ?? [];
+        // Permitir apenas IDs de usuários com role comercial
+        if (!empty($ids)) {
+            $allowed = \DB::table('users')->whereIn('id', $ids)->where('role', 'comercial')->pluck('id')->toArray();
+            $diff = array_diff($ids, $allowed);
+            if (!empty($diff)) {
+                return response()->json(['message' => 'Somente usuários com papel comercial podem ser atribuídos', 'invalid_ids' => array_values($diff)], 422);
+            }
+        }
+        // Capturar conjunto anterior para invalidar caches dos usuários impactados
+        $prev = \DB::table('contact_user')->where('contact_id', $contact->id)->pluck('user_id')->toArray();
         \DB::beginTransaction();
         try {
             \DB::table('contact_user')->where('contact_id', $contact->id)->delete();
@@ -41,6 +56,12 @@ class ContactController extends Controller
             \DB::rollBack();
             throw $e;
         }
+        // Invalidar caches de stats para usuários afetados e atualizar marcador global
+        $affected = array_values(array_unique(array_merge($prev, $ids)));
+        foreach ($affected as $uid) {
+            Cache::forget('contacts_stats:uid:' . (int)$uid);
+        }
+        Cache::put('contacts_last_change', now()->toIso8601String(), now()->addDays(30));
         return response()->json(['user_ids' => $ids]);
     }
     // Estatísticas: total, processados, pendentes com ETag

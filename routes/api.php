@@ -21,10 +21,14 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/me', [AuthController::class, 'me']);
     Route::post('/logout', [AuthController::class, 'logout']);
 
+    // Listagem de usuários:
+    // - Admin: acesso completo com paginação e filtros
+    // - Usuário normal/comercial: apenas role=comercial com campos mínimos
+    Route::get('/users', [AuthController::class, 'listUsers']);
+
     // admin only
     Route::middleware('admin')->group(function () {
         // users admin
-        Route::get('/users', [AuthController::class, 'listUsers']);
         Route::post('/users', [AuthController::class, 'createUser']);
         Route::put('/users/{user}', [AuthController::class, 'updateUser']);
     Route::put('/users/{user}/active', [AuthController::class, 'setUserActive']);
@@ -34,10 +38,12 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/contacts/import/background', [ContactController::class, 'importBackground']);
     // visibilidade por contato (admin)
     Route::get('/contacts/{contact}/visibility', [ContactController::class, 'visibilityList']);
-    Route::put('/contacts/{contact}/visibility', [ContactController::class, 'visibilityUpdate']);
         // settings (admin)
         Route::put('/settings/script', [SettingsController::class, 'saveScript']);
     });
+
+    // Atualizar visibilidade: permitido para admin e também para usuário normal
+    Route::put('/contacts/{contact}/visibility', [ContactController::class, 'visibilityUpdate']);
 
     // contacts (rotas públicas autenticadas)
     Route::get('/contacts/stats', [ContactController::class, 'stats']);

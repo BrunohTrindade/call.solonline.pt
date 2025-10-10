@@ -9,15 +9,33 @@ use Illuminate\Validation\Rule;
 
 class AuthController extends Controller
 {
-    // Lista usuários (admin) com paginação simples
+    // Lista usuários
+    // - Admin: pode listar todos (suporta paginação, all=true etc.)
+    // - Não-admin: somente quando role=comercial for pedido, retornando campos mínimos
     public function listUsers(Request $request)
     {
-        // all=true retorna todos sem paginação
+        $auth = $request->user();
+        $isAdmin = (bool) optional($auth)->is_admin || (optional($auth)->role ?? '') === 'admin';
+        $roleFilter = (string) $request->query('role', '');
+        // all=true retorna todos sem paginação (somente admin)
         $all = filter_var($request->query('all', false), FILTER_VALIDATE_BOOLEAN);
 
-        $query = User::query()
-            ->orderBy('id', 'asc')
-            ->select(['id','name','email','is_admin','role','active','created_at','updated_at']);
+        $query = User::query()->orderBy('id', 'asc');
+
+        // Regras de acesso:
+        // - Se não for admin, só permitimos quando role=comercial, retornando campos mínimos
+        if (!$isAdmin) {
+            if (strtolower($roleFilter) !== 'comercial') {
+                return response()->json(['message' => 'Acesso negado'], 403);
+            }
+            $users = $query->where('role', 'comercial')
+                ->select(['id','name','email','role','active'])
+                ->get();
+            return response()->json(['data' => array_values($users->toArray()), 'meta' => ['total' => count($users)]]);
+        }
+
+        // Admin: seleção completa
+        $query->select(['id','name','email','is_admin','role','active','created_at','updated_at']);
 
         if ($all) {
             $items = $query->get()->map(function ($u) {
@@ -39,6 +57,11 @@ class AuthController extends Controller
             ?? 15;
         $perPage = max(1, min(100, (int) $perPage));
         $page = max(1, (int) $request->query('page', 1));
+
+        // Optional filter por role para admin
+        if ($roleFilter !== '') {
+            $query->where('role', $roleFilter);
+        }
 
         $result = $query->paginate($perPage, ['*'], 'page', $page);
         $result->getCollection()->transform(function ($u) {

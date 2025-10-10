@@ -101,3 +101,16 @@ Content-Type: text/csv
 # Substitua a linha abaixo pelo caminho do seu arquivo CSV local quando for testar com a extensão REST Client:
 # < /caminho/para/seu/arquivo/contatos.csv
 --WebKitFormBoundary7MA4YWxkTrZu0gW--
+
+### Listar somente usuários comerciais (não-admin pode usar)
+GET {{api}}/api/users?role=comercial
+Authorization: Bearer {{token}}
+
+### Atualizar visibilidade (admin ou usuário normal). Envie apenas IDs de usuários comerciais
+PUT {{api}}/api/contacts/1/visibility
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "user_ids": [2,3]
+}
