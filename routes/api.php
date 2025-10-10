@@ -37,12 +37,15 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/contacts/import', [ContactController::class, 'import']);
         Route::post('/contacts/import/background', [ContactController::class, 'importBackground']);
     // visibilidade por contato (admin)
-    Route::get('/contacts/{contact}/visibility', [ContactController::class, 'visibilityList']);
+    // GET de visibilidade será exposto fora do admin com checagem no controller
         // settings (admin)
         Route::put('/settings/script', [SettingsController::class, 'saveScript']);
     });
 
-    // Atualizar visibilidade: permitido para admin e também para usuário normal
+    // Visibilidade
+    // - GET: leitura para admin e usuário normal (controller bloqueia comercial)
+    // - PUT: atualização para admin e usuário normal (controller bloqueia comercial)
+    Route::get('/contacts/{contact}/visibility', [ContactController::class, 'visibilityList']);
     Route::put('/contacts/{contact}/visibility', [ContactController::class, 'visibilityUpdate']);
 
     // contacts (rotas públicas autenticadas)

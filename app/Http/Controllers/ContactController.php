@@ -10,10 +10,16 @@ use Illuminate\Support\Facades\Cache;
 
 class ContactController extends Controller
 {
-    // Lista usuários com acesso (visibilidade) a um contato - admin
+    // Lista usuários com acesso (visibilidade) a um contato
     public function visibilityList(Request $request, Contact $contact)
     {
-        // Apenas admin pode usar; middleware admin já protege a rota
+        // Permitir leitura para admin e usuário normal; bloquear comercial
+        $actor = $request->user();
+        $isAdmin = (bool) optional($actor)->is_admin || (optional($actor)->role ?? '') === 'admin';
+        $isComercial = (optional($actor)->role ?? '') === 'comercial';
+        if ($isComercial) {
+            return response()->json(['message' => 'Usuário comercial não pode consultar visibilidade'], 403);
+        }
         $ids = \DB::table('contact_user')->where('contact_id', $contact->id)->pluck('user_id');
         return response()->json(['user_ids' => array_values($ids->toArray())]);
     }

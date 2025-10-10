@@ -114,3 +114,7 @@ Content-Type: application/json
 {
   "user_ids": [2,3]
 }
+
+### Consultar visibilidade atual (admin ou usuário normal)
+GET {{api}}/api/contacts/1/visibility
+Authorization: Bearer {{token}}
