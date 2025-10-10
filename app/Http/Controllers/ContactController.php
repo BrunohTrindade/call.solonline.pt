@@ -37,22 +37,22 @@ class ContactController extends Controller
             'user_ids.*' => ['integer','exists:users,id'],
         ]);
         $ids = $data['user_ids'] ?? [];
-        // Permitir apenas IDs de usuários com role comercial
+        // Permitir apenas IDs de usuários com role comercial; se houver inválidos, ignorá-los e prosseguir (compartilhamento parcial)
+        $allowed = [];
+        $invalid = [];
         if (!empty($ids)) {
             $allowed = \DB::table('users')->whereIn('id', $ids)->where('role', 'comercial')->pluck('id')->toArray();
-            $diff = array_diff($ids, $allowed);
-            if (!empty($diff)) {
-                return response()->json(['message' => 'Somente usuários com papel comercial podem ser atribuídos', 'invalid_ids' => array_values($diff)], 422);
-            }
+            $invalid = array_values(array_diff($ids, $allowed));
         }
+        $idsToSave = !empty($allowed) ? $allowed : [];
         // Capturar conjunto anterior para invalidar caches dos usuários impactados
         $prev = \DB::table('contact_user')->where('contact_id', $contact->id)->pluck('user_id')->toArray();
         \DB::beginTransaction();
         try {
             \DB::table('contact_user')->where('contact_id', $contact->id)->delete();
-            if (!empty($ids)) {
+            if (!empty($idsToSave)) {
                 $rows = [];
-                foreach ($ids as $uid) {
+                foreach ($idsToSave as $uid) {
                     $rows[] = [ 'contact_id' => $contact->id, 'user_id' => (int)$uid ];
                 }
                 \DB::table('contact_user')->insert($rows);
@@ -63,12 +63,14 @@ class ContactController extends Controller
             throw $e;
         }
         // Invalidar caches de stats para usuários afetados e atualizar marcador global
-        $affected = array_values(array_unique(array_merge($prev, $ids)));
+        $affected = array_values(array_unique(array_merge($prev, $idsToSave)));
         foreach ($affected as $uid) {
             Cache::forget('contacts_stats:uid:' . (int)$uid);
         }
         Cache::put('contacts_last_change', now()->toIso8601String(), now()->addDays(30));
-        return response()->json(['user_ids' => $ids]);
+        $resp = ['user_ids' => array_values($idsToSave)];
+        if (!empty($invalid)) { $resp['invalid_ids'] = $invalid; $resp['message'] = 'Alguns IDs não são comerciais e foram ignorados.'; }
+        return response()->json($resp);
     }
     // Estatísticas: total, processados, pendentes com ETag
     public function stats(Request $request)
